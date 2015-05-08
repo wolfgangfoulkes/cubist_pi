@@ -21,12 +21,7 @@ using namespace std;
 using namespace qtime;
 
 #define MAX_CLIPS 5
-
-/*
-CIRCULAR BUFFER LOADS MOVIES, THEN MAIN THREAD COPIES THEM INTO VECTOR
-ALSO VERSION-CONTROL THIS FIRST
-*/
-
+#define MAX_BUFFER 15
 
 struct recursive_directory_range
 {
@@ -73,8 +68,7 @@ void cubist_pi_1App::setup()
      
      loader_thread = shared_ptr<thread>( new thread( bind( &cubist_pi_1App::loaderThread, this ) ) );
      
-     //m_clips.reserve(MAX_CLIPS);
-     c_clips = new ConcurrentCircularBuffer<pair<qtime::MovieGlRef, qtime::MovieGlRef>>(MAX_CLIPS);
+     c_clips = new ConcurrentCircularBuffer<pair<qtime::MovieGlRef, qtime::MovieGlRef>>(MAX_BUFFER);
 
     try {
 		m_shader = gl::GlslProg( loadAsset("glsl/vert_pt.glsl"), loadAsset( "glsl/frag_mask.glsl" ) );
@@ -99,10 +93,6 @@ void cubist_pi_1App::update()
           c_clips->popBack(&p);
           
           m_clips.insert(m_clips.begin(), p);
-          if (m_clips.size() >= MAX_CLIPS)
-          {
-               m_clips.pop_back();
-          }
      }
 }
 
@@ -117,7 +107,6 @@ void cubist_pi_1App::draw()
     {
           for (int i = 0; (i < MAX_CLIPS) && (i < m_clips.size()); i++)
           {
-               
                Texture m_frame = m_clips[i].first->getTexture();
                Texture m_frame_m = m_clips[i].second->getTexture();
                m_frame.bind(0);
@@ -168,7 +157,7 @@ void cubist_pi_1App::loaderThread()
      while (!should_quit)
      {
           loadMoviesFromDir(directory);
-          chrono::seconds delay(60);
+          chrono::seconds delay(120);
           this_thread::sleep_for(delay);
      }
 }
@@ -198,7 +187,12 @@ void cubist_pi_1App::loadMoviesFromDir(string dir_)
      {
           try
           {
-               int r = random() % movies.size();
+               if (! movies.size())
+               {
+                    return;
+               }
+
+               int r =  random() % movies.size();
                
                //float speed = ((random() % 3) + 1) * 0.5;
                
