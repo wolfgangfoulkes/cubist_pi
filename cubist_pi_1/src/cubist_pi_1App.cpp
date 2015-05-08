@@ -129,6 +129,7 @@ void cubist_pi_1App::draw()
                m_shader.uniform("f_height", (float) m_frame.getSize().y);
 
                Rectf centered_rect = Rectf( m_frame.getBounds() ).getCenteredFit( getWindowBounds(), true );
+               centered_rect.scaleCentered(Vec2f(1.0, -1.0));
                gl::drawSolidRect(centered_rect);
              
                m_shader.unbind();
