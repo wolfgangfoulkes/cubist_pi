@@ -7,7 +7,8 @@
 #include "cinder/gl/GlslProg.h"
 #include "cinder/Utilities.h"
 #include <sstream>
-#include <pthread.h>
+#include "cinder/Thread.h"
+#include "cinder/ConcurrentCircularBuffer.h"
 
 #include <boost/filesystem.hpp>
 
@@ -17,6 +18,7 @@ using namespace ci;
 using namespace ci::app;
 using namespace gl;
 using namespace std;
+using namespace qtime;
 
 #define MAX_CLIPS 5
 
@@ -48,19 +50,16 @@ class cubist_pi_1App : public AppNative {
     void loadMovieFile( const fs::path &path_, qtime::MovieGlRef &movie_ );
     void loadMoviesFromDir(string dir_);
     void loaderThread();
-    string removeExtension(string path);
-    
+
     gl::GlslProg            m_shader;
     
-    vector<fs::path> m_paths;
     vector<pair<qtime::MovieGlRef, qtime::MovieGlRef>> m_clips;
-    vector<qtime::MovieGlRef> m_movies;
-    vector<qtime::MovieGlRef> m_masks;
+    ConcurrentCircularBuffer<pair<qtime::MovieGlRef, qtime::MovieGlRef>>* c_clips;
     
     string directory;
     shared_ptr<thread>loader_thread;
     bool should_quit;
-    mutex m_mutex;
+    //mutex m_mutex;
 };
 
 void cubist_pi_1App::setup()
@@ -73,6 +72,9 @@ void cubist_pi_1App::setup()
      directory = "/Users/wolfgag/Desktop/cubistPics/media";
      
      loader_thread = shared_ptr<thread>( new thread( bind( &cubist_pi_1App::loaderThread, this ) ) );
+     
+     //m_clips.reserve(MAX_CLIPS);
+     c_clips = new ConcurrentCircularBuffer<pair<qtime::MovieGlRef, qtime::MovieGlRef>>(MAX_CLIPS);
 
     try {
 		m_shader = gl::GlslProg( loadAsset("glsl/vert_pt.glsl"), loadAsset( "glsl/frag_mask.glsl" ) );
@@ -91,12 +93,17 @@ void cubist_pi_1App::setup()
 
 void cubist_pi_1App::update()
 {
-//     if ()
-//     {
-//          //IN CINDER YOU CANNOT INITIALIZE A TEXTURE WITH ANOTHER TEXTURE FOOL
-//          m_frame = m_movies.back()->getTexture();
-//          m_frame_m = m_masks.back()->getTexture();
-//     }
+     pair<MovieGlRef, MovieGlRef>p;
+     if (c_clips->isNotEmpty())
+     {
+          c_clips->popBack(&p);
+          
+          m_clips.insert(m_clips.begin(), p);
+          if (m_clips.size() >= MAX_CLIPS)
+          {
+               m_clips.pop_back();
+          }
+     }
 }
 
 void cubist_pi_1App::draw()
@@ -108,12 +115,11 @@ void cubist_pi_1App::draw()
     
     if (m_shader)
     {
-          m_mutex.lock();
-          //cout << "3:" << m_movies.size() << ", " << m_masks.size() << endl;
-          for (int i = 0; (i < m_movies.size()) && (i < m_masks.size()); i++)
+          for (int i = 0; (i < MAX_CLIPS) && (i < m_clips.size()); i++)
           {
-               Texture m_frame = m_movies[i]->getTexture();
-               Texture m_frame_m = m_masks[i]->getTexture();
+               
+               Texture m_frame = m_clips[i].first->getTexture();
+               Texture m_frame_m = m_clips[i].second->getTexture();
                m_frame.bind(0);
                m_frame_m.bind(1);
                m_shader.bind();
@@ -128,13 +134,8 @@ void cubist_pi_1App::draw()
                m_shader.unbind();
                m_frame.unbind();
                m_frame_m.unbind();
-               //cout << "4:" << m_movies.size() << ", " << m_masks.size() << endl;
           }
-          m_mutex.unlock();
-          
     }
-    
-
     gl::disableDepthRead();
     gl::disableAlphaBlending();
 }
@@ -142,6 +143,7 @@ void cubist_pi_1App::draw()
 void cubist_pi_1App::shutdown()
 {
      should_quit = true;
+     c_clips->cancel();
      loader_thread->join();
 }
 
@@ -159,18 +161,13 @@ void cubist_pi_1App::loadMovieFile( const fs::path &path_, qtime::MovieGlRef &mo
 	}
 }
 
-string removeExtension(string path_)
-{
-     int lastindex = path_.find_last_of(".");
-     return path_.substr(0, lastindex);
-}
-
 void cubist_pi_1App::loaderThread()
 {
+     ci::ThreadSetup threadSetup;
      while (!should_quit)
      {
           loadMoviesFromDir(directory);
-          chrono::seconds delay(20);
+          chrono::seconds delay(60);
           this_thread::sleep_for(delay);
      }
 }
@@ -195,46 +192,45 @@ void cubist_pi_1App::loadMoviesFromDir(string dir_)
           }
      }
      
-     m_mutex.lock();
      
-     m_movies.clear();
-     m_masks.clear();
-     for (int i = 0; i < MAX_CLIPS; i++)
+     while (c_clips->isNotFull())
      {
           try
           {
                int r = random() % movies.size();
-               //cout << movies.size() << ", " << masks.size() << endl;
                
-//               float speed = ((random() % 3) + 1) * 0.5;
+               //float speed = ((random() % 3) + 1) * 0.5;
                
                //maybe MovieGl instead of ref
                qtime::MovieGlRef movie = qtime::MovieGl::create( fs::path(movies[r]) );
+               qtime::MovieGlRef mask = qtime::MovieGl::create( fs::path(masks[r]) );
+               if (! (movie && mask) )
+               {
+                    cout << "not" << endl;
+                    continue;
+               }
+               
+               if (! (movie->checkPlayable() && mask->checkPlayable()) )
+               {
+                    cout << "not playable" << endl;
+                    continue;
+               }
+               
                movie->setLoop();
                movie->play();
                movie->setRate(0.15);
-               m_movies.push_back(movie);
                
-               //cout << "1:" << m_movies.size() << ", " << m_masks.size() << endl;
-               
-               qtime::MovieGlRef mask = qtime::MovieGl::create( fs::path(masks[r]) );
                mask->setLoop();
                mask->play();
                mask->setRate(0.15);
-               m_masks.push_back(mask);
                
-               //cout << "2:" << m_movies.size() << ", " << m_masks.size() << endl;
-               
-               //m_clips.push_back(pair<qtime::MovieGlRef, qtime::MovieGlRef>(movie, mask));
+               c_clips->pushFront(pair<MovieGlRef, MovieGlRef>(movie, mask));
           }
           catch(...)
           {
-               m_movies.clear();
-               m_masks.clear();
           }
      }
-     
-    m_mutex.unlock();
+
      
 }
 
