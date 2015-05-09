@@ -20,8 +20,8 @@ using namespace gl;
 using namespace std;
 using namespace qtime;
 
-#define MAX_CLIPS 5
-#define MAX_BUFFER 15
+#define MAX_CLIPS 3
+#define MAX_BUFFER 10
 
 struct recursive_directory_range
 {
@@ -157,7 +157,7 @@ void cubist_pi_1App::loaderThread()
      while (!should_quit)
      {
           loadMoviesFromDir(directory);
-          chrono::seconds delay(120);
+          chrono::seconds delay(250);
           this_thread::sleep_for(delay);
      }
 }
